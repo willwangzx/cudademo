@@ -18,6 +18,10 @@
 
 namespace {
 
+// This benchmark focuses on throughput differences between general FP32 GEMM and
+// Tensor Core friendly low-precision GEMM. The reported dense TOPS are measured
+// GEMM throughput, while the "2:4 sparsity" line is only an effective-counting view
+// to help relate benchmark results to NVIDIA's AI TOPS marketing numbers.
 constexpr int kMatrixSize = 4096;
 constexpr int kBenchmarkIterations = 20;
 constexpr size_t kLtWorkspaceBytes = 32ULL * 1024ULL * 1024ULL;
@@ -30,6 +34,7 @@ struct StorageType {
 
 template <>
 struct StorageType<__nv_fp4_e2m1> {
+  // NVFP4 values are stored packed as fp4x2, so two logical scalars share one storage slot.
   static constexpr size_t packing = 2;
   using type = __nv_fp4x2_e2m1;
 };
@@ -78,6 +83,8 @@ double compute_tops(double total_ops, double elapsed_ms) {
 }
 
 double compute_sparse_effective_tops(double dense_tops) {
+  // NVIDIA AI TOPS numbers are often quoted with 2:4 sparsity enabled, which doubles
+  // the effective operation count for the same dense matmul wall time.
   return dense_tops * 2.0;
 }
 
@@ -122,6 +129,8 @@ constexpr size_t packed_element_count(size_t scalar_count) {
 }
 
 size_t get_scale_tensor_size(int rows, int cols, cublasLtMatmulMatrixScale_t scale_mode) {
+  // cuBLASLt low-precision paths expect auxiliary scale tensors whose shapes depend on
+  // the scaling mode. This helper mirrors the layout rules from NVIDIA's samples/docs.
   if (scale_mode == CUBLASLT_MATMUL_MATRIX_SCALE_SCALAR_32F) {
     return 1;
   }
@@ -158,6 +167,8 @@ size_t get_scale_tensor_size(int rows, int cols, cublasLtMatmulMatrixScale_t sca
 }
 
 std::vector<__nv_fp8_e4m3> quantize_to_fp8(const std::vector<float>& input) {
+  // Simple host-side quantization is enough for a throughput demo because we mainly care
+  // about exercising the Tensor Core path, not building a production quantization pipeline.
   std::vector<__nv_fp8_e4m3> output(input.size());
   for (size_t i = 0; i < input.size(); ++i) {
     output[i] = __nv_fp8_e4m3(input[i]);
@@ -169,6 +180,7 @@ std::vector<__nv_fp4x2_e2m1> quantize_to_nvfp4x2(const std::vector<float>& input
   std::vector<__nv_fp4x2_e2m1> output(packed_element_count<__nv_fp4_e2m1>(input.size()));
   for (size_t storage_idx = 0; storage_idx < output.size(); ++storage_idx) {
     const size_t element_idx = storage_idx * 2;
+    // Pad the last odd element with zero because fp4 storage is packed in pairs.
     const float left = input[element_idx];
     const float right = element_idx + 1 < input.size() ? input[element_idx + 1] : 0.0f;
     const float2 packed = {left, right};
@@ -184,6 +196,8 @@ struct LtPathResult {
   std::string note;
 };
 
+// FP8 and NVFP4 are configured through cuBLASLt rather than plain cuBLAS because they need
+// richer descriptors: explicit scale tensors, output amax, and heuristic algorithm selection.
 class Fp8LtRunner {
  public:
   bool initialize(cublasLtHandle_t handle,
@@ -275,6 +289,8 @@ class Fp8LtRunner {
       return fail("CUBLASLT_MATMUL_DESC_AMAX_D_POINTER", status);
     }
 
+    // Like the cuBLAS row-major trick, these descriptors are intentionally laid out as
+    // the transposed view of row-major matrices so the math still corresponds to C = A * B.
     status = cublasLtMatrixLayoutCreate(&left_desc_, CUDA_R_8F_E4M3, n, k, n);
     if (status != CUBLAS_STATUS_SUCCESS) {
       return fail("cublasLtMatrixLayoutCreate(left)", status);
@@ -307,6 +323,8 @@ class Fp8LtRunner {
       return fail("CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES", status);
     }
 
+    // Ask cuBLASLt for one valid algorithm. If none is returned, this precision path is
+    // not available for the current GPU / driver / toolkit combination.
     int returned_results = 0;
     status = cublasLtMatmulAlgoGetHeuristic(handle_, operation_desc_, left_desc_, right_desc_,
                                             c_desc_, d_desc_, preference_, 1, &heuristic_,
@@ -497,6 +515,8 @@ class Nvfp4LtRunner {
       return fail("CUBLASLT_MATMUL_DESC_D_OUT_SCALE_POINTER", status);
     }
 
+    // NVFP4 follows the official cuBLASLt sample layout more closely than the FP8 path:
+    // the A operand is exposed with an explicit transpose and block-scale metadata.
     const uint64_t rows_a = transa == CUBLAS_OP_N ? static_cast<uint64_t>(m)
                                                   : static_cast<uint64_t>(k);
     const uint64_t cols_a = transa == CUBLAS_OP_N ? static_cast<uint64_t>(k)
@@ -625,6 +645,8 @@ void run_fp32_pedantic(cublasHandle_t handle,
   const float alpha = 1.0f;
   const float beta = 0.0f;
 
+  // Pedantic FP32 disables fast reduced-precision modes and serves as the general-purpose
+  // floating-point baseline for this file.
   CUBLAS_CHECK(cublasGemmEx(handle,
                             CUBLAS_OP_N,
                             CUBLAS_OP_N,
@@ -656,6 +678,7 @@ void run_tf32(cublasHandle_t handle,
   const float alpha = 1.0f;
   const float beta = 0.0f;
 
+  // TF32 keeps FP32 inputs/outputs but routes the multiply path through Tensor Cores.
   CUBLAS_CHECK(cublasGemmEx(handle,
                             CUBLAS_OP_N,
                             CUBLAS_OP_N,
@@ -687,6 +710,7 @@ void run_fp16(cublasHandle_t handle,
   const float alpha = 1.0f;
   const float beta = 0.0f;
 
+  // FP16 inputs with FP32 accumulation are a common dense-Tensor-Core training/inference mix.
   CUBLAS_CHECK(cublasGemmEx(handle,
                             CUBLAS_OP_N,
                             CUBLAS_OP_N,
@@ -718,6 +742,7 @@ void run_int8(cublasHandle_t handle,
   const int32_t alpha = 1;
   const int32_t beta = 0;
 
+  // INT8 uses integer accumulation, so the output buffer is int32 rather than float.
   CUBLAS_CHECK(cublasGemmEx(handle,
                             CUBLAS_OP_N,
                             CUBLAS_OP_N,
@@ -746,6 +771,7 @@ float benchmark_ms(LaunchFn&& launch, int iterations) {
   CUDA_CHECK(cudaEventCreate(&start));
   CUDA_CHECK(cudaEventCreate(&stop));
 
+  // Warm up once before recording so first-use overhead does not distort the steady-state path.
   launch();
   CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -785,6 +811,7 @@ int main() {
   constexpr int kK = kMatrixSize;
   constexpr int kN = kMatrixSize;
 
+  // All paths benchmark the same GEMM shape so the throughput numbers stay directly comparable.
   const size_t float_elements = static_cast<size_t>(kM) * kK;
   const size_t float_c_elements = static_cast<size_t>(kM) * kN;
   const size_t bytes_f32_a = float_elements * sizeof(float);
@@ -805,6 +832,7 @@ int main() {
                                sizeof(__nv_fp4x2_e2m1);
   const size_t bytes_nvfp4_c =
       packed_element_count<__nv_fp4_e2m1>(float_c_elements) * sizeof(__nv_fp4x2_e2m1);
+  // NVFP4 uses per-block scales, so its auxiliary metadata footprint depends on matrix shape.
   const size_t nvfp4_left_scale_count =
       get_scale_tensor_size(kN, kK, CUBLASLT_MATMUL_MATRIX_SCALE_VEC16_UE4M3);
   const size_t nvfp4_right_scale_count =
@@ -950,6 +978,8 @@ int main() {
   CUBLAS_CHECK(cublasCreate(&handle));
   CUBLAS_CHECK(cublasLtCreate(&lt_handle));
 
+  // We count GEMM as 2 * M * N * K operations so TFLOPS/TOPS are directly comparable across
+  // all precisions, even though the internal hardware pipelines are very different.
   const double total_ops = compute_matmul_ops(kM, kK, kN, kBenchmarkIterations);
 
   const float fp32_ms = benchmark_ms(
@@ -976,6 +1006,8 @@ int main() {
   LtPathResult nvfp4_result;
   float fp8_amax = 0.0f;
   Fp8LtRunner fp8_runner;
+  // FP8/NVFP4 are optional paths. If initialization fails, we report "skipped" rather than
+  // aborting the whole demo so the rest of the benchmark still provides value.
   if (fp8_runner.initialize(lt_handle, d_b_fp8, d_a_fp8, d_c_bf16, d_d_fp8,
                             d_fp8_left_scale, d_fp8_right_scale, d_fp8_c_scale,
                             d_fp8_d_scale, d_fp8_amax, kM, kN, kK, d_lt_workspace,
