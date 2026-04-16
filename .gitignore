@@ -1,0 +1,75 @@
+# Build output directories
+/build/
+/build-*/
+/cmake-build-*/
+/manual-build/
+/out/
+/dist/
+
+# CMake generated files
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/compile_commands.json
+/CTestTestfile.cmake
+/install_manifest.txt
+/Testing/
+/.cmake/
+
+# Visual Studio / MSBuild / Ninja generated files
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.ninja
+*.ninja_deps
+*.ninja_log
+
+# Compiled binaries and intermediate artifacts
+*.exe
+*.out
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.exp
+*.obj
+*.o
+*.pdb
+*.idb
+*.ilk
+*.tlog
+*.recipe
+*.cache
+*.deps
+*.ptx
+*.cubin
+*.fatbin
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# CUDA / profiling artifacts
+*.nsys-rep
+*.qdrep
+*.nvvp
+
+# IDE and OS metadata
+.vs/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Keep shared VS Code tasks/scripts, ignore local machine-specific settings
+.vscode/*
+!.vscode/build-active-cuda.cmd
+!.vscode/build-active-cuda.sh
+!.vscode/tasks.json
+!.vscode/launch.json
