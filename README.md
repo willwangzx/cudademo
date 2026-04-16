@@ -2,6 +2,12 @@
 
 这个仓库按“边写 demo 边学 CUDA”的思路组织。你只要顺着 demo 顺序跑一遍，再按每个 demo 后面的建议自己改一改，进步会比只看概念快很多。
 
+## Prerequisites
+- NVIDIA GPU（建议支持 Compute Capability 3.0 及以上的设备）
+- CUDA Toolkit（建议版本 11.0 及以上）[https://developer.nvidia.com/cuda-downloads]
+- C++ 编译器（支持 C++11 或更高版本）
+- CMake（建议版本 3.10 及以上）
+
 ## 你会学到什么
 
 - CUDA 程序的基本结构：host 代码、device 代码、kernel launch
