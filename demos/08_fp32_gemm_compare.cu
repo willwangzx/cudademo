@@ -13,6 +13,10 @@
 
 namespace {
 
+// This benchmark compares three views of the same FP32 GEMM workload:
+// 1. CPU multithreaded baseline
+// 2. A teaching-oriented tiled CUDA kernel
+// 3. cuBLAS SGEMM as a library-grade baseline close to hardware potential
 constexpr int kTile = 16;
 constexpr int kMatrixSize = 2048;
 constexpr int kCpuBenchmarkIterations = 2;
@@ -62,6 +66,7 @@ __global__ void tiled_matmul(const float* a,
                              int m,
                              int k,
                              int n) {
+  // Shared-memory tiling improves arithmetic intensity by reusing A/B tiles inside a block.
   __shared__ float tile_a[kTile][kTile];
   __shared__ float tile_b[kTile][kTile];
 
@@ -101,6 +106,7 @@ void matmul_cpu_rows(const std::vector<float>& a,
                      int n,
                      int row_begin,
                      int row_end) {
+  // The CPU path is intentionally straightforward: a fair baseline, not a BLAS replacement.
   for (int row = row_begin; row < row_end; ++row) {
     float* c_row = c.data() + static_cast<size_t>(row) * n;
     const float* a_row = a.data() + static_cast<size_t>(row) * k;
@@ -119,6 +125,7 @@ void matmul_cpu_rows(const std::vector<float>& a,
 }
 
 unsigned int get_cpu_worker_count(int rows) {
+  // Prefer physical cores when available so the CPU baseline is less sensitive to SMT noise.
   unsigned int workers = getPhysicalCoreCount();
   if (workers == 0) {
     workers = std::thread::hardware_concurrency();
@@ -206,7 +213,8 @@ void run_cublas_fp32(cublasHandle_t handle,
   const float alpha = 1.0f;
   const float beta = 0.0f;
 
-  // cuBLAS is column-major by default. For row-major C = A * B, compute C^T = B^T * A^T.
+  // cuBLAS is column-major by default. For row-major C = A * B, ask cuBLAS to compute
+  // C^T = B^T * A^T instead so the buffer layout still matches our row-major host vectors.
   CUBLAS_CHECK(cublasGemmEx(handle,
                             CUBLAS_OP_N,
                             CUBLAS_OP_N,
@@ -286,6 +294,7 @@ int main() {
   const dim3 block(kTile, kTile);
   const dim3 grid(div_up(kN, kTile), div_up(kM, kTile));
 
+  // Warm up both GPU paths once before timing so first-use costs do not pollute throughput.
   tiled_matmul<<<grid, block>>>(d_a, d_b, d_c_custom, kM, kK, kN);
   CUDA_CHECK(cudaGetLastError());
   CUDA_CHECK(cudaDeviceSynchronize());
@@ -305,6 +314,7 @@ int main() {
   CUDA_CHECK(cudaEventCreate(&cublas_start));
   CUDA_CHECK(cudaEventCreate(&cublas_stop));
 
+  // GPU timing is kernel/library-call only: host-device copies are excluded on purpose.
   CUDA_CHECK(cudaEventRecord(custom_start));
   for (int iter = 0; iter < kGpuBenchmarkIterations; ++iter) {
     tiled_matmul<<<grid, block>>>(d_a, d_b, d_c_custom, kM, kK, kN);

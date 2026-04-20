@@ -8,6 +8,9 @@
 #include <iostream>
 #include <vector>
 
+// This microbenchmark intentionally uses an in-place SAXPY-like update, y = x + y.
+// It is useful for showing that simple elementwise math is usually memory-bound:
+// each element performs only 1 FLOP but still needs to read/write several bytes.
 __global__ void add_kernel(const float* x, float* y, int n) {
   const int global_id = blockIdx.x * blockDim.x + threadIdx.x;
   const int stride = blockDim.x * gridDim.x;
@@ -27,6 +30,7 @@ double compute_gflops(size_t num_elements,
                       int iterations,
                       double flops_per_element,
                       double elapsed_ms) {
+  // FLOP/s is derived from work performed divided by elapsed wall time.
   const double total_flops =
       static_cast<double>(num_elements) * static_cast<double>(iterations) * flops_per_element;
   const double elapsed_seconds = elapsed_ms / 1.0e3;
@@ -37,6 +41,7 @@ double compute_effective_bandwidth_gb_s(size_t num_elements,
                                         int iterations,
                                         double bytes_per_element,
                                         double elapsed_ms) {
+  // Effective bandwidth uses the bytes this kernel actually touches, not the device peak spec.
   const double total_bytes =
       static_cast<double>(num_elements) * static_cast<double>(iterations) * bytes_per_element;
   const double elapsed_seconds = elapsed_ms / 1.0e3;
@@ -98,6 +103,7 @@ int main() {
   CUDA_CHECK(cudaMemcpy(d_x, h_x.data(), bytes, cudaMemcpyHostToDevice));
   CUDA_CHECK(cudaMemcpy(d_y, h_y_initial.data(), bytes, cudaMemcpyHostToDevice));
 
+  // One block per 1024 elements is enough because the kernel uses a grid-stride loop.
   const int blocks = div_up(kNumElements, kThreadsPerBlock);
 
   // Warm up once so first-launch overhead does not skew the measured timings.
@@ -123,6 +129,7 @@ int main() {
   CUDA_CHECK(cudaEventCreate(&kernel_start));
   CUDA_CHECK(cudaEventCreate(&kernel_stop));
 
+  // Kernel-only timing answers "how fast is the GPU math path once the data is resident?".
   CUDA_CHECK(cudaMemcpy(d_y, h_y_initial.data(), bytes, cudaMemcpyHostToDevice));
   CUDA_CHECK(cudaEventRecord(kernel_start));
   for (int iter = 0; iter < kIterations; ++iter) {
@@ -136,6 +143,7 @@ int main() {
   CUDA_CHECK(cudaEventElapsedTime(&gpu_kernel_ms, kernel_start, kernel_stop));
   CUDA_CHECK(cudaMemcpy(h_gpu_iterated.data(), d_y, bytes, cudaMemcpyDeviceToHost));
 
+  // End-to-end timing keeps the host/device copies inside the loop to show the real pipeline cost.
   const auto gpu_total_start = std::chrono::steady_clock::now();
   for (int iter = 0; iter < kIterations; ++iter) {
     CUDA_CHECK(cudaMemcpy(d_x, h_x.data(), bytes, cudaMemcpyHostToDevice));

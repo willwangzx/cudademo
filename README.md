@@ -96,6 +96,8 @@ cmake -S . -B build -DCUDA_DEMO_REQUIRE_CUDA=ON
 | 5 | `demos/05_tiled_matmul.cu` | tile 优化 | 理解数据复用与共享内存价值 |
 | 6 | `demos/06_streams_async.cu` | stream + 异步 pipeline | 理解拷贝与计算重叠的思路 |
 | 7 | `demos/07_bucket_sort.cu` | histogram + scan + scatter + bucket sort | 练习把多个 CUDA 小模块串成完整 pipeline |
+| 8 | `demos/08_fp32_gemm_compare.cu` | CPU / 自写 kernel / cuBLAS 的 FP32 GEMM 对比 | 理解“教学 kernel 性能”和“库级实现性能”之间的差距 |
+| 9 | `demos/09_tensorcore_tops_compare.cu` | FP32 / TF32 / FP16 / INT8 / FP8 / NVFP4 Tensor Core 吞吐对比 | 理解 TFLOPS、TOPS 和 AI TOPS 口径之间的关系 |
 
 ## 建议运行命令
 
@@ -108,6 +110,8 @@ cmake -S . -B build -DCUDA_DEMO_REQUIRE_CUDA=ON
 .\build\bin\Release\demo05_tiled_matmul.exe
 .\build\bin\Release\demo06_streams_async.exe
 .\build\bin\Release\demo07_bucket_sort.exe
+.\build\bin\Release\demo08_fp32_gemm_compare.exe
+.\build\bin\Release\demo09_tensorcore_tops_compare.exe
 ```
 
 如果你的生成器不是 Visual Studio，也可能在下面这个目录：
@@ -229,6 +233,65 @@ Linux / WSL 上通常是：
 
 - 把 stream 数改成 `2` 或 `8`
 - 比较同步版本和异步版本的时间
+
+### Demo 8: FP32 GEMM Compare
+
+看点：
+
+- 为什么逐元素加法更像带宽测试，而矩阵乘更接近“通用浮点算力”测试
+- 同样是 FP32 GEMM，自写 shared-memory kernel 和 cuBLAS 差距会有多大
+- 为什么 benchmark 通常要区分 CPU 时间、GPU kernel 时间、理论峰值利用率
+
+建议你自己改：
+
+- 把矩阵尺寸改成 `1024`、`4096`，观察吞吐是否稳定
+- 把 `kTile` 改大或改小，感受教学 kernel 的性能变化
+- 对比 `Release` 和 `Debug` 构建的差异
+
+### Demo 9: Tensor Core TOPS Compare
+
+看点：
+
+- `FP32`、`TF32`、`FP16`、`INT8`、`FP8`、`NVFP4` 分别代表什么计算路径
+- 为什么低精度路径要用 `cuBLASLt`，而不是只用 `cuBLAS`
+- 为什么营销里的 `AI TOPS` 往往比你自己测到的 dense GEMM TOPS 更高
+
+建议你自己改：
+
+- 先只看 `FP32/TF32/FP16`，再逐步加入 `INT8/FP8/NVFP4`
+- 拔电、插电各跑一遍，观察笔记本 GPU 的功耗状态对结果的影响
+- 试着把输出里的 dense TOPS 和 `2:4 sparsity` effective TOPS 对照理解
+
+## 性能 Benchmark 补充
+
+仓库里和“算力差异”最相关的文件主要有 3 个：
+
+- `demos/add.cu`：原地 `y = x + y`，适合说明为什么简单逐元素运算通常是 memory-bound
+- `demos/08_fp32_gemm_compare.cu`：更适合比较通用 FP32 算力
+- `demos/09_tensorcore_tops_compare.cu`：更适合理解 Tensor Core 和 AI TOPS 口径
+
+### 先看什么指标
+
+- `demos/add.cu` 重点看 `GB/s` 和 end-to-end 时间，因为它每个元素只有 `1 FLOP`，算术强度很低
+- `demo08` 重点看 `TFLOP/s`、`cuBLAS` 对自写 kernel 的倍数、以及相对理论峰值的利用率
+- `demo09` 重点看不同精度之间的相对倍数，而不是只看绝对数值
+
+### dense TOPS 和 AI TOPS 的区别
+
+- `demo09` 输出的 `dense TOPS` 是按 `2 * M * N * K / time` 算出来的真实 GEMM 吞吐
+- `2:4 sparsity effective TOPS` 是把 dense 吞吐乘以 `2` 的“有效计数”视角
+- 这条 sparse 线更接近 NVIDIA 宣传里的 `AI TOPS` 口径，但它不是说你的 dense GEMM 真的快了 2 倍
+
+### 读结果时要注意什么
+
+- `Debug` 构建主要用于调试，不适合看 benchmark 数字；看性能请用 `Release`
+- 笔记本在离电、静音、节能模式下，GPU 的实际频率和功耗墙都可能明显下降
+- `TF32/FP16/FP8/NVFP4` 的比较更像“不同硬件路径的吞吐对比”，不是完全等价的数值精度对比
+- `FP8` 和 `NVFP4` 在这个 demo 里带有 scale tensor，结果更适合作为 throughput demo，而不是严谨数值分析基线
+
+### 单文件构建说明
+
+`demos/add.cu` 目前更像实验文件，没有接进默认的 CMake target 列表。如果你想单独跑它，可以继续用 VS Code 的 active-file 构建脚本，或者直接用 `nvcc` 单独编译。
 
 ## 推荐学习节奏
 
