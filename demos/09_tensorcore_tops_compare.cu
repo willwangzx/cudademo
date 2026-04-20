@@ -23,7 +23,7 @@ namespace {
 // GEMM throughput, while the "2:4 sparsity" line is only an effective-counting view
 // to help relate benchmark results to NVIDIA's AI TOPS marketing numbers.
 constexpr int kMatrixSize = 4096;
-constexpr int kBenchmarkIterations = 20;
+constexpr int kBenchmarkIterations = 50;
 constexpr size_t kLtWorkspaceBytes = 32ULL * 1024ULL * 1024ULL;
 
 template <typename T>
