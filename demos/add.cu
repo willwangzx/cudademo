@@ -70,7 +70,7 @@ float compute_max_error(const std::vector<float>& lhs, const std::vector<float>&
 }
 
 int main() {
-  constexpr int kNumElements = 1 << 24;
+  constexpr int kNumElements = 1 << 20;
   constexpr int kThreadsPerBlock = 1024;
   constexpr int kIterations = 10;
   constexpr double kFlopsPerElement = 1.0;  // y = x + y
